@@ -31,7 +31,8 @@ def reshape_emnist_element(element):
 def get_emnist_datasets(client_batch_size: int,
                         client_epochs_per_round: int,
                         max_batches_per_client: Optional[int] = -1,
-                        only_digits: Optional[bool] = False):
+                        only_digits: Optional[bool] = False,
+                        cache_dir: Optional[str] = None):
   """Loads and preprocesses EMNIST training and testing sets.
 
   Args:
@@ -63,7 +64,7 @@ def get_emnist_datasets(client_batch_size: int,
                      'some positive integer.')
 
   emnist_train, emnist_test = tff.simulation.datasets.emnist.load_data(
-      only_digits=only_digits)
+      only_digits=only_digits, cache_dir=cache_dir)
 
   def preprocess_train_dataset(dataset):
     """Preprocessing function for the EMNIST training dataset."""
@@ -98,7 +99,8 @@ def get_centralized_datasets(train_batch_size: int,
                              max_train_batches: Optional[int] = None,
                              max_test_batches: Optional[int] = None,
                              only_digits: Optional[bool] = False,
-                             shuffle_train: Optional[bool] = True):
+                             shuffle_train: Optional[bool] = True,
+                             cache_dir: Optional[str] = None):
   """Loads and preprocesses centralized EMNIST training and testing sets.
 
   Args:
@@ -121,7 +123,7 @@ def get_centralized_datasets(train_batch_size: int,
     test_dataset: A `tf.data.Dataset` instance representing the test dataset.
   """
   emnist_train, emnist_test = tff.simulation.datasets.emnist.load_data(
-      only_digits=only_digits)
+      only_digits=only_digits, cache_dir=cache_dir)
 
   def preprocess(dataset, batch_size, buffer_size=10000, shuffle_data=True):
     if shuffle_data:

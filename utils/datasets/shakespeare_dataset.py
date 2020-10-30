@@ -133,7 +133,8 @@ def construct_character_level_datasets(client_batch_size: int,
                                        client_epochs_per_round: int,
                                        sequence_length: int = SEQUENCE_LENGTH,
                                        max_batches_per_client: int = -1,
-                                       shuffle_buffer_size: int = 50):
+                                       shuffle_buffer_size: int = 50,
+                                       cache_dir: Optional[str] = None):
   """Loads and preprocesses a federated Shakespeare training dataset."""
 
   if client_epochs_per_round == -1 and max_batches_per_client == -1:
@@ -141,7 +142,9 @@ def construct_character_level_datasets(client_batch_size: int,
                      ' intended, then max_batches_per_client must be set to '
                      'some positive integer.')
 
-  train_client_data, _ = (tff.simulation.datasets.shakespeare.load_data())
+  train_client_data, _ = (
+    tff.simulation.datasets.shakespeare.load_data(
+      cache_dir=cache_dir))
 
   preprocessed_train_client_data = train_client_data.preprocess(
       functools.partial(
@@ -160,7 +163,8 @@ def get_centralized_datasets(train_batch_size: int,
                              max_train_batches: Optional[int] = None,
                              max_test_batches: Optional[int] = None,
                              sequence_length: Optional[int] = SEQUENCE_LENGTH,
-                             shuffle_buffer_size: Optional[int] = 10000):
+                             shuffle_buffer_size: Optional[int] = 10000,
+                             cache_dir: Optional[str] = None):
   """Loads and preprocesses centralized Shakespeare datasets.
 
   Args:
@@ -180,7 +184,8 @@ def get_centralized_datasets(train_batch_size: int,
     test_dataset: A `tf.data.Dataset` instance representing the test dataset.
   """
   train_client_data, test_client_data = (
-      tff.simulation.datasets.shakespeare.load_data())
+      tff.simulation.datasets.shakespeare.load_data(
+        cache_dir=cache_dir))
 
   train_dataset = convert_snippets_to_character_sequence_examples(
       train_client_data.create_tf_dataset_from_all_clients(),
