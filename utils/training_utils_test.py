@@ -15,6 +15,7 @@
 
 import collections
 
+from absl import logging
 from absl.testing import parameterized
 import numpy as np
 import tensorflow as tf
@@ -51,7 +52,15 @@ def create_tf_dataset_for_client(client_id, batch_data=True):
   return dataset
 
 
-class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
+def tff_model_fn():
+  return tff.learning.from_keras_model(
+      keras_model=model_builder(),
+      input_spec=get_input_spec(),
+      loss=tf.keras.losses.MeanSquaredError(),
+      metrics=[tf.keras.metrics.MeanSquaredError()])
+
+
+class SamplingTest(tf.test.TestCase, parameterized.TestCase):
 
   @parameterized.named_parameters(
       {
@@ -120,7 +129,7 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
     tff_dataset = tff.simulation.client_data.ConcreteClientData(
         [2], create_tf_dataset_for_client)
     client_datasets_fn = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=1)
+        tff_dataset, clients_per_round=1)
     client_datasets = client_datasets_fn(round_num=7)
     sample_batch = next(iter(client_datasets[0]))
     reference_batch = next(iter(create_tf_dataset_for_client(2)))
@@ -131,12 +140,12 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
         [0, 1, 2, 3, 4], create_tf_dataset_for_client)
 
     client_datasets_fn_1 = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=1, random_seed=363)
+        tff_dataset, clients_per_round=1, random_seed=363)
     client_datasets_1 = client_datasets_fn_1(round_num=5)
     sample_batch_1 = next(iter(client_datasets_1[0]))
 
     client_datasets_fn_2 = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=1, random_seed=363)
+        tff_dataset, clients_per_round=1, random_seed=363)
     client_datasets_2 = client_datasets_fn_2(round_num=5)
     sample_batch_2 = next(iter(client_datasets_2[0]))
 
@@ -147,14 +156,14 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
         list(range(100)), create_tf_dataset_for_client)
 
     client_datasets_fn_1 = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=50, random_seed=1)
+        tff_dataset, clients_per_round=50, random_seed=1)
     client_datasets_1 = client_datasets_fn_1(round_num=1001)
     sample_batches_1 = [
         next(iter(client_dataset)) for client_dataset in client_datasets_1
     ]
 
     client_datasets_fn_2 = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=50, random_seed=2)
+        tff_dataset, clients_per_round=50, random_seed=2)
     client_datasets_2 = client_datasets_fn_2(round_num=1001)
     sample_batches_2 = [
         next(iter(client_dataset)) for client_dataset in client_datasets_2
@@ -166,7 +175,7 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
     tff_dataset = tff.simulation.client_data.ConcreteClientData(
         list(range(100)), create_tf_dataset_for_client)
     client_datasets_fn = training_utils.build_client_datasets_fn(
-        tff_dataset, train_clients_per_round=50)
+        tff_dataset, clients_per_round=50)
     client_datasets_1 = client_datasets_fn(round_num=0)
     sample_batches_1 = [
         next(iter(client_dataset)) for client_dataset in client_datasets_1
@@ -178,17 +187,13 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
     ]
     self.assertNotAllClose(sample_batches_1, sample_batches_2)
 
+
+class CentralizedEvaluationTest(tf.test.TestCase):
+
   def test_evaluate_fn_with_list_of_trainable_variables(self):
 
     loss_builder = tf.keras.losses.MeanSquaredError
     metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
-
-    def tff_model_fn():
-      return tff.learning.from_keras_model(
-          keras_model=model_builder(),
-          input_spec=get_input_spec(),
-          loss=loss_builder(),
-          metrics=metrics_builder())
 
     iterative_process = tff.learning.build_federated_averaging_process(
         tff_model_fn, client_optimizer_fn=tf.keras.optimizers.SGD)
@@ -199,9 +204,8 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
         trainable=list(state.model.trainable),
         non_trainable=list(state.model.non_trainable))
 
-    evaluate_fn = training_utils.build_evaluate_fn(test_dataset, model_builder,
-                                                   loss_builder,
-                                                   metrics_builder)
+    evaluate_fn = training_utils.build_centralized_evaluate_fn(
+        test_dataset, model_builder, loss_builder, metrics_builder)
 
     test_metrics = evaluate_fn(reference_model)
     self.assertIn('loss', test_metrics)
@@ -210,13 +214,6 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
 
     loss_builder = tf.keras.losses.MeanSquaredError
     metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
-
-    def tff_model_fn():
-      return tff.learning.from_keras_model(
-          keras_model=model_builder(),
-          input_spec=get_input_spec(),
-          loss=loss_builder(),
-          metrics=metrics_builder())
 
     iterative_process = tff.learning.build_federated_averaging_process(
         tff_model_fn, client_optimizer_fn=tf.keras.optimizers.SGD)
@@ -227,9 +224,8 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
         trainable=tuple(state.model.trainable),
         non_trainable=tuple(state.model.non_trainable))
 
-    evaluate_fn = training_utils.build_evaluate_fn(test_dataset, model_builder,
-                                                   loss_builder,
-                                                   metrics_builder)
+    evaluate_fn = training_utils.build_centralized_evaluate_fn(
+        test_dataset, model_builder, loss_builder, metrics_builder)
 
     test_metrics = evaluate_fn(reference_model)
     self.assertIn('loss', test_metrics)
@@ -279,7 +275,169 @@ class TrainingUtilsTest(tf.test.TestCase, parameterized.TestCase):
     converted_batch = next(iter(converted_dataset))
     self.assertAllClose(tuple_batch, converted_batch)
 
-  # TODO(b/143440780): Add more robust tests for dataset tuple conversion.
+
+class FederatedEvaluationTest(tf.test.TestCase):
+
+  def _create_balanced_client_datasets(self, client_id):
+    if client_id == 0:
+      x = [[1.0], [2.0], [3.0]]
+      y = [[0.0], [0.0], [0.0]]
+    elif client_id == 1:
+      x = [[1.0], [2.0], [3.0]]
+      y = [[1.0], [2.0], [0.5]]
+    return tf.data.Dataset.from_tensor_slices(
+        collections.OrderedDict(x=x, y=y)).batch(1)
+
+  def _create_unbalanced_client_datasets(self, client_id):
+    if client_id == 0:
+      x = [[1.0], [2.0]]
+      y = [[0.0], [0.0]]
+    elif client_id == 1:
+      x = [[1.0], [2.0], [3.0]]
+      y = [[0.0], [0.0], [3.0]]
+    return tf.data.Dataset.from_tensor_slices(
+        collections.OrderedDict(x=x, y=y)).batch(1)
+
+  def _create_client_data(self, balanced=True):
+    client_ids = [0, 1]
+    if balanced:
+      create_tf_dataset_for_client_fn = self._create_balanced_client_datasets
+    else:
+      create_tf_dataset_for_client_fn = self._create_unbalanced_client_datasets
+
+    return tff.simulation.client_data.ConcreteClientData(
+        client_ids=client_ids,
+        create_tf_dataset_for_client_fn=create_tf_dataset_for_client_fn)
+
+  def test_eval_metrics_for_balanced_client_data(self):
+    client_data = self._create_client_data(balanced=True)
+    metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
+    eval_fn = training_utils.build_federated_evaluate_fn(
+        client_data, model_builder, metrics_builder, clients_per_round=2)
+    model_weights = tff.learning.ModelWeights.from_model(tff_model_fn())
+    eval_metrics = eval_fn(model_weights, round_num=1)
+    logging.info('Eval metrics: %s', eval_metrics)
+
+    self.assertCountEqual(eval_metrics.keys(),
+                          ['mean_squared_error', 'num_examples'])
+
+    # Testing correctness of sum-based metrics
+    expected_sum_keys = ['summed', 'uniform_weighted', 'quantiles']
+    self.assertCountEqual(eval_metrics['num_examples'].keys(),
+                          expected_sum_keys)
+    self.assertEqual(eval_metrics['num_examples']['summed'], 6)
+    self.assertEqual(eval_metrics['num_examples']['uniform_weighted'], 3.0)
+
+    # Testing correctness of mean-based metrics
+    expected_keys = ['example_weighted', 'uniform_weighted', 'quantiles']
+    self.assertCountEqual(eval_metrics['mean_squared_error'].keys(),
+                          expected_keys)
+
+    expected_mse = 0.875
+    self.assertNear(
+        eval_metrics['mean_squared_error']['uniform_weighted'],
+        expected_mse,
+        err=1e-6)
+    self.assertNear(
+        eval_metrics['mean_squared_error']['example_weighted'],
+        expected_mse,
+        err=1e-6)
+
+  def test_eval_metrics_for_unbalanced_client_data(self):
+    client_data = self._create_client_data(balanced=False)
+    metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
+    eval_fn = training_utils.build_federated_evaluate_fn(
+        client_data, model_builder, metrics_builder, clients_per_round=2)
+    model_weights = tff.learning.ModelWeights.from_model(tff_model_fn())
+    eval_metrics = eval_fn(model_weights, round_num=1)
+    logging.info('Eval metrics: %s', eval_metrics)
+
+    self.assertCountEqual(eval_metrics.keys(),
+                          ['mean_squared_error', 'num_examples'])
+
+    # Testing correctness of sum-based metrics
+    expected_sum_keys = ['summed', 'uniform_weighted', 'quantiles']
+    self.assertCountEqual(eval_metrics['num_examples'].keys(),
+                          expected_sum_keys)
+    self.assertEqual(eval_metrics['num_examples']['summed'], 5)
+    self.assertEqual(eval_metrics['num_examples']['uniform_weighted'], 2.5)
+
+    # Testing correctness of mean-based metrics
+    expected_keys = ['example_weighted', 'uniform_weighted', 'quantiles']
+    self.assertCountEqual(eval_metrics['mean_squared_error'].keys(),
+                          expected_keys)
+
+    expected_uniform_mse = 1.5
+    expected_example_mse = 1.8
+
+    self.assertNear(
+        eval_metrics['mean_squared_error']['uniform_weighted'],
+        expected_uniform_mse,
+        err=1e-6)
+    self.assertNear(
+        eval_metrics['mean_squared_error']['example_weighted'],
+        expected_example_mse,
+        err=1e-6)
+
+  def test_quantile_aggregation_for_mse(self):
+    client_ids = [0, 1, 2, 3, 4]
+    quantiles = [0, 0.25, 0.5, 0.75, 1.0]
+
+    def create_single_value_ds(client_id):
+      client_value = [[float(client_id)]]
+      return tf.data.Dataset.from_tensor_slices(
+          collections.OrderedDict(x=client_value, y=client_value)).batch(1)
+
+    client_data = tff.simulation.client_data.ConcreteClientData(
+        client_ids=client_ids,
+        create_tf_dataset_for_client_fn=create_single_value_ds)
+
+    metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
+    eval_fn = training_utils.build_federated_evaluate_fn(
+        client_data,
+        model_builder,
+        metrics_builder,
+        clients_per_round=5,
+        quantiles=quantiles)
+    model_weights = tff.learning.ModelWeights.from_model(tff_model_fn())
+    eval_metrics = eval_fn(model_weights, round_num=1)
+    logging.info('Eval metrics: %s', eval_metrics)
+
+    mse_quantiles = eval_metrics['mean_squared_error']['quantiles']
+    expected_quantile_values = [0.0, 1.0, 4.0, 9.0, 16.0]
+    expected_quantiles = collections.OrderedDict(
+        zip(quantiles, expected_quantile_values))
+    self.assertEqual(mse_quantiles, expected_quantiles)
+
+  def test_quantile_aggregation_for_num_examples(self):
+    client_ids = [0, 1, 2, 3, 4]
+    quantiles = [0, 0.25, 0.5, 0.75, 1.0]
+
+    def create_single_value_ds(client_id):
+      client_value = [[0.0]] * (client_id + 1)
+      return tf.data.Dataset.from_tensor_slices(
+          collections.OrderedDict(x=client_value, y=client_value)).batch(1)
+
+    client_data = tff.simulation.client_data.ConcreteClientData(
+        client_ids=client_ids,
+        create_tf_dataset_for_client_fn=create_single_value_ds)
+
+    metrics_builder = lambda: [tf.keras.metrics.MeanSquaredError()]
+    eval_fn = training_utils.build_federated_evaluate_fn(
+        client_data,
+        model_builder,
+        metrics_builder,
+        clients_per_round=5,
+        quantiles=quantiles)
+    model_weights = tff.learning.ModelWeights.from_model(tff_model_fn())
+    eval_metrics = eval_fn(model_weights, round_num=1)
+    logging.info('Eval metrics: %s', eval_metrics)
+
+    num_examples_quantiles = eval_metrics['num_examples']['quantiles']
+    expected_quantile_values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    expected_quantiles = collections.OrderedDict(
+        zip(quantiles, expected_quantile_values))
+    self.assertEqual(num_examples_quantiles, expected_quantiles)
 
 
 if __name__ == '__main__':

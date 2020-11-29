@@ -59,23 +59,18 @@ with utils_impl.record_hparam_flags() as shared_flags:
                        'How many clients to sample per round.')
   flags.DEFINE_integer('client_datasets_random_seed', 1,
                        'Random seed for client sampling.')
-  flags.DEFINE_integer('total_rounds', 200, 'Number of total training rounds.')
 
   # Training loop configuration
   flags.DEFINE_string(
       'experiment_name', None, 'The name of this experiment. Will be append to '
       '--root_output_dir to separate experiment results.')
+  flags.mark_flag_as_required('experiment_name')
   flags.DEFINE_string('root_output_dir', '/tmp/fed_opt/',
                       'Root directory for writing experiment output.')
-  flags.DEFINE_boolean(
-      'write_metrics_with_bz2', True, 'Whether to use bz2 '
-      'compression when writing output metrics to a csv file.')
+  flags.DEFINE_integer('total_rounds', 200, 'Number of total training rounds.')
   flags.DEFINE_integer(
       'rounds_per_eval', 1,
       'How often to evaluate the global model on the validation dataset.')
-  flags.DEFINE_integer(
-      'rounds_per_train_eval', 100,
-      'How often to evaluate the global model on the entire training dataset.')
   flags.DEFINE_integer('rounds_per_checkpoint', 50,
                        'How often to checkpoint the global model.')
   flags.DEFINE_integer(

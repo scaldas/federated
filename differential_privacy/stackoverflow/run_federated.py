@@ -73,10 +73,6 @@ with utils_impl.record_new_flags():
   flags.DEFINE_float(
       'clipped_count_budget_allocation', 0.1,
       'Fraction of privacy budget to allocate for clipped counts.')
-  flags.DEFINE_boolean(
-      'per_vector_clipping', False, 'Use per-vector clipping'
-      'to indepednelty clip each weight tensor instead of the'
-      'entire model.')
 
 with utils_impl.record_new_flags() as training_loop_flags:
   flags.DEFINE_integer('total_rounds', 200, 'Number of total training rounds.')
@@ -85,9 +81,6 @@ with utils_impl.record_new_flags() as training_loop_flags:
       '--root_output_dir to separate experiment results.')
   flags.DEFINE_string('root_output_dir', '/tmp/differential_privacy/',
                       'Root directory for writing experiment output.')
-  flags.DEFINE_boolean(
-      'write_metrics_with_bz2', True, 'Whether to use bz2 '
-      'compression when writing output metrics to a csv file.')
   flags.DEFINE_integer(
       'rounds_per_eval', 1,
       'How often to evaluate the global model on the validation dataset.')
@@ -169,9 +162,7 @@ def main(argv):
         adaptive_clip_learning_rate=FLAGS.adaptive_clip_learning_rate,
         target_unclipped_quantile=FLAGS.target_unclipped_quantile,
         clipped_count_budget_allocation=FLAGS.clipped_count_budget_allocation,
-        expected_clients_per_round=FLAGS.clients_per_round,
-        per_vector_clipping=FLAGS.per_vector_clipping,
-        model=model_fn())
+        expected_clients_per_round=FLAGS.clients_per_round)
 
     weights_type = tff.learning.framework.weights_type_from_model(model_fn)
     aggregation_process = tff.utils.build_dp_aggregate_process(
@@ -192,13 +183,13 @@ def main(argv):
   client_datasets_fn = training_utils.build_client_datasets_fn(
       train_dataset, FLAGS.clients_per_round)
 
-  evaluate_fn = training_utils.build_evaluate_fn(
+  evaluate_fn = training_utils.build_centralized_evaluate_fn(
       model_builder=model_builder,
       eval_dataset=validation_dataset,
       loss_builder=loss_builder,
       metrics_builder=metrics_builder)
 
-  test_fn = training_utils.build_evaluate_fn(
+  test_fn = training_utils.build_centralized_evaluate_fn(
       model_builder=model_builder,
       # Use both val and test for symmetry with other experiments, which
       # evaluate on the entire test set.

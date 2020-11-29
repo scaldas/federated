@@ -61,7 +61,6 @@ class FederatedTasksTest(tf.test.TestCase, parameterized.TestCase):
         iterative_process_builder=iterative_process_builder,
         rounds_per_checkpoint=10,
         rounds_per_eval=10,
-        rounds_per_train_eval=10,
         max_eval_batches=2)
     root_output_dir = self.get_temp_dir()
     exp_name = 'test_run_federated'
@@ -74,25 +73,25 @@ class FederatedTasksTest(tf.test.TestCase, parameterized.TestCase):
     self.assertTrue(tf.io.gfile.exists(results_dir))
 
     scalar_manager = metrics_manager.ScalarMetricsManager(results_dir)
-    metrics = scalar_manager.get_metrics()
+    fieldnames, metrics = scalar_manager.get_metrics()
 
     self.assertIn(
         'train/loss',
-        metrics.columns,
+        fieldnames,
         msg='The output metrics should have a `train/loss` column if training '
         'is successful.')
     self.assertIn(
         'eval/loss',
-        metrics.columns,
+        fieldnames,
         msg='The output metrics should have a `train/loss` column if validation'
         ' metrics computation is successful.')
     self.assertIn(
         'test/loss',
-        metrics.columns,
+        fieldnames,
         msg='The output metrics should have a `test/loss` column if test '
         'metrics computation is successful.')
     self.assertLen(
-        metrics.index,
+        metrics,
         total_rounds + 1,
         msg='The number of rows in the metrics CSV should be the number of '
         'training rounds + 1 (as there is an extra row for validation/test set'

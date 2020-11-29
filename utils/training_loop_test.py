@@ -240,44 +240,6 @@ class ExperimentRunnerTest(tf.test.TestCase):
                                            federated_data[0][0].y)
     self.assertEqual(final_loss, restored_loss)
 
-  def test_train_eval_writes_metrics(self):
-
-    experiment_name = 'train_eval_metrics'
-    iterative_process = _build_federated_averaging_process()
-    batch = _batch_fn()
-    federated_data = [[batch]]
-
-    def client_datasets_fn(round_num):
-      del round_num
-      return federated_data
-
-    def evaluate(model):
-      keras_model = tff.simulation.models.mnist.create_keras_model(
-          compile_model=True)
-      model.assign_weights_to(keras_model)
-      return {'loss': keras_model.evaluate(batch.x, batch.y)}
-
-    root_output_dir = self.get_temp_dir()
-    training_loop.run(
-        iterative_process=iterative_process,
-        client_datasets_fn=client_datasets_fn,
-        validation_fn=evaluate,
-        total_rounds=1,
-        experiment_name=experiment_name,
-        train_eval_fn=evaluate,
-        root_output_dir=root_output_dir,
-        rounds_per_eval=10,
-        rounds_per_train_eval=10)
-
-    results_dir = os.path.join(root_output_dir, 'results', experiment_name)
-
-    scalar_manager = metrics_manager.ScalarMetricsManager(results_dir)
-    metrics = scalar_manager.get_metrics()
-    self.assertEqual(2, len(metrics.index))
-    self.assertIn('eval/loss', metrics.columns)
-    self.assertIn('train_eval/loss', metrics.columns)
-    self.assertNotIn('test/loss', metrics.columns)
-
   def test_fn_writes_metrics(self):
     experiment_name = 'test_metrics'
     iterative_process = _build_federated_averaging_process()
@@ -308,11 +270,10 @@ class ExperimentRunnerTest(tf.test.TestCase):
     results_dir = os.path.join(root_output_dir, 'results', experiment_name)
 
     scalar_manager = metrics_manager.ScalarMetricsManager(results_dir)
-    metrics = scalar_manager.get_metrics()
-    self.assertEqual(2, len(metrics.index))
-    self.assertIn('eval/loss', metrics.columns)
-    self.assertIn('test/loss', metrics.columns)
-    self.assertNotIn('train_eval/loss', metrics.columns)
+    fieldnames, metrics = scalar_manager.get_metrics()
+    self.assertLen(metrics, 2)
+    self.assertIn('eval/loss', fieldnames)
+    self.assertIn('test/loss', fieldnames)
 
 
 if __name__ == '__main__':
