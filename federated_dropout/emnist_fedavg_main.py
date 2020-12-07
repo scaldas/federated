@@ -22,6 +22,8 @@ import functools
 from absl import app
 from absl import flags
 import numpy as np
+import os
+import pandas as pd
 import tensorflow as tf
 import tensorflow_federated as tff
 
@@ -48,6 +50,13 @@ flags.DEFINE_integer('dropout_seed', 931231, 'Seed to control dropout randomness
 flags.DEFINE_integer('server_hidden_units', 150, 'Number of hidden units on the server.')
 flags.DEFINE_integer('client_hidden_units', 50, 'Number of hidden units on the clients.')
 
+# Other flags.
+flags.DEFINE_string(
+  'results_path', './results/results.csv', 'Path to save results csv.')
+flags.DEFINE_string(
+  'cache_path', './cache/', 'Path to cache the dataset.')
+
+
 FLAGS = flags.FLAGS
 
 
@@ -60,8 +69,9 @@ def get_emnist_dataset():
     `emnist_test` is a single `tf.data.Dataset` representing the test data of
     all clients.
   """
+  os.makedirs(FLAGS.cache_path, exist_ok=True)
   emnist_train, emnist_test = tff.simulation.datasets.emnist.load_data(
-      only_digits=True)
+      only_digits=True, cache_dir=FLAGS.cache_path)
 
   def element_fn(element):
     return collections.OrderedDict(
@@ -123,6 +133,7 @@ def main(argv):
 
   metric = tf.keras.metrics.SparseCategoricalAccuracy(name='test_accuracy')
   model = tff_server_model_fn() # The evaluation is done with the full server model.
+  results_dict = collections.OrderedDict()
   for round_num in range(FLAGS.total_rounds):
     sampled_clients = np.random.choice(
         train_data.client_ids,
@@ -135,10 +146,42 @@ def main(argv):
     server_state, train_metrics = iterative_process.next(
         server_state, sampled_train_data, round_num)
     print(f'Round {round_num} training loss: {train_metrics}')
+    results_dict[round_num] = collections.OrderedDict(
+      server_hidden_units=FLAGS.server_hidden_units,
+      client_hidden_units=FLAGS.client_hidden_units,
+      dropout_seed=FLAGS.dropout_seed,
+      train_loss=train_metrics)
+    
     if round_num % FLAGS.rounds_per_eval == 0:
       model.from_weights(server_state.model_weights)
       accuracy = simple_fedavg_tf.keras_evaluate(model.keras_model, test_data, metric)
+      
       print(f'Round {round_num} validation accuracy: {accuracy * 100.0}')
+      results_dict[round_num]['val_accuracy'] = accuracy.numpy()
+
+  save_results(results_dict)
+
+
+def save_results(results_dict): 
+  results_df = collections.OrderedDict()
+  
+  for r in results_dict:
+    results_df[r] = results_dict[r].values()
+
+  results_df = pd.DataFrame.from_dict(
+    results_df,
+    orient='index',
+    columns=[
+      'server_hidden_units',
+      'client_hidden_units',
+      'dropout_seed',
+      'train_loss',
+      'val_accuracy'])
+  results_df = results_df.rename_axis('round_num')
+
+  print(f'Saving results in {FLAGS.results_path}')
+  os.makedirs(os.path.dirname(FLAGS.results_path), exist_ok=True)
+  results_df.to_csv(FLAGS.results_path)
 
 
 if __name__ == '__main__':
