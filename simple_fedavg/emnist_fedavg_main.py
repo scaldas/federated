@@ -27,9 +27,8 @@ import pandas as pd
 import tensorflow as tf
 import tensorflow_federated as tff
 
-from federated_dropout import emnist_models
-from federated_dropout import simple_fedavg_tf
-from federated_dropout import simple_fedavg_tff
+import simple_fedavg_tf
+import simple_fedavg_tff
 
 # Training hyperparameters
 flags.DEFINE_integer('total_rounds', 256, 'Number of total training rounds.')
@@ -45,17 +44,16 @@ flags.DEFINE_integer('test_batch_size', 100, 'Minibatch size of test data.')
 flags.DEFINE_float('server_learning_rate', 1.0, 'Server learning rate.')
 flags.DEFINE_float('client_learning_rate', 0.1, 'Client learning rate.')
 
-# Dropout flags.
-flags.DEFINE_integer('dropout_seed', 931231, 'Seed to control dropout randomness.')
-flags.DEFINE_integer('server_hidden_units', 150, 'Number of hidden units on the server.')
-flags.DEFINE_integer('client_hidden_units', 50, 'Number of hidden units on the clients.')
+# Model flags.
+flags.DEFINE_integer('hidden_units', 50, 'Number of hidden units.')
 
 # Other flags.
 flags.DEFINE_string(
   'results_path', './results/results.csv', 'Path to save results csv.')
 flags.DEFINE_string(
   'cache_path', './cache/', 'Path to cache the dataset.')
-
+flags.DEFINE_integer('client_selection_seed', 0, 'Seed for training client selection.')
+flags.DEFINE_integer('initializer_seed', 0, 'Seed for initializing weights.')
 
 FLAGS = flags.FLAGS
 
@@ -94,6 +92,37 @@ def get_emnist_dataset():
   return emnist_train, emnist_test
 
 
+def create_fully_connected_model(num_hidden_units, only_digits=True):
+  """Creates a model with a single hidden layer.
+
+  Args:
+    num_hidden_units: Number of units in the hidden layer.
+    only_digits: If True, uses a final layer with 10 outputs, for use with the
+      digits only EMNIST dataset. If False, uses 62 outputs for the larger
+      dataset.
+
+  Returns:
+    An uncompiled `tf.keras.Model`.
+  """
+  model = tf.keras.models.Sequential([
+      tf.keras.layers.Flatten(
+        input_shape=[28, 28, 1]),
+      tf.keras.layers.Dense(
+        num_hidden_units,
+        activation=tf.nn.relu,
+        kernel_initializer=tf.keras.initializers.GlorotUniform(
+          seed=FLAGS.initializer_seed),
+        bias_initializer='zeros'),
+      tf.keras.layers.Dense(
+        10 if only_digits else 62,
+        activation=tf.nn.softmax,
+        kernel_initializer=tf.keras.initializers.GlorotUniform(
+          seed=FLAGS.initializer_seed),
+        bias_initializer='zeros')
+  ])
+  return model
+
+
 def server_optimizer_fn():
   return tf.keras.optimizers.SGD(learning_rate=FLAGS.server_learning_rate)
 
@@ -103,37 +132,28 @@ def client_optimizer_fn():
 
 
 def main(argv):
+  os.environ['PYTHONHASHSEED'] = str(FLAGS.client_selection_seed)
+  np.random.seed(FLAGS.client_selection_seed)
+
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
   train_data, test_data = get_emnist_dataset()
 
-  """These functions construct fully initialized models for use in federated averaging."""
-  def tff_server_model_fn():
-    server_model = emnist_models.create_fully_connected_model(
-      num_hidden_units=FLAGS.server_hidden_units, only_digits=True)
+  def tff_model_fn():
+    """Constructs a fully initialized model for use in federated averaging."""
+    keras_model = create_fully_connected_model(FLAGS.hidden_units, only_digits=True)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    return simple_fedavg_tf.KerasModelWrapper(server_model, test_data.element_spec, loss)
-
-  def tff_client_model_fn():
-    client_model = emnist_models.create_fully_connected_model(
-      num_hidden_units=FLAGS.client_hidden_units, only_digits=True)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    return simple_fedavg_tf.KerasModelWrapper(client_model, test_data.element_spec, loss)
+    return simple_fedavg_tf.KerasModelWrapper(keras_model,
+                                              test_data.element_spec, loss)
 
   iterative_process = simple_fedavg_tff.build_federated_averaging_process(
-      tff_server_model_fn,
-      tff_client_model_fn,
-      emnist_models.map_server_to_client_model,
-      emnist_models.map_client_to_server_model,
-      FLAGS.dropout_seed,
-      server_optimizer_fn,
-      client_optimizer_fn)
+      tff_model_fn, server_optimizer_fn, client_optimizer_fn)
   server_state = iterative_process.initialize()
 
   metric = tf.keras.metrics.SparseCategoricalAccuracy(name='test_accuracy')
-  model = tff_server_model_fn() # The evaluation is done with the full server model.
-  results_dict = collections.OrderedDict()
+  model, results_dict = tff_model_fn(), collections.OrderedDict()
+  
   for round_num in range(FLAGS.total_rounds):
     sampled_clients = np.random.choice(
         train_data.client_ids,
@@ -143,20 +163,20 @@ def main(argv):
         train_data.create_tf_dataset_for_client(client)
         for client in sampled_clients
     ]
+    
     server_state, train_metrics = iterative_process.next(
-        server_state, sampled_train_data, round_num)
-    print(f'Round {round_num} training loss: {train_metrics}')
+        server_state, sampled_train_data)
     results_dict[round_num] = collections.OrderedDict(
-      server_hidden_units=FLAGS.server_hidden_units,
-      client_hidden_units=FLAGS.client_hidden_units,
-      dropout_seed=FLAGS.dropout_seed,
-      train_loss=train_metrics)
+      hidden_units=FLAGS.hidden_units, train_loss=train_metrics)
     
     if round_num % FLAGS.rounds_per_eval == 0:
       model.from_weights(server_state.model_weights)
-      accuracy = simple_fedavg_tf.keras_evaluate(model.keras_model, test_data, metric)
+      accuracy = simple_fedavg_tf.keras_evaluate(
+        model.keras_model, test_data, metric)
       
+      print(f'Round {round_num} training loss: {train_metrics}')
       print(f'Round {round_num} validation accuracy: {accuracy * 100.0}')
+      
       results_dict[round_num]['val_accuracy'] = accuracy.numpy()
 
   save_results(results_dict)
@@ -171,12 +191,7 @@ def save_results(results_dict):
   results_df = pd.DataFrame.from_dict(
     results_df,
     orient='index',
-    columns=[
-      'server_hidden_units',
-      'client_hidden_units',
-      'dropout_seed',
-      'train_loss',
-      'val_accuracy'])
+    columns=['hidden_units', 'train_loss', 'val_accuracy'])
   results_df = results_df.rename_axis('round_num')
 
   print(f'Saving results in {FLAGS.results_path}')

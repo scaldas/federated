@@ -28,7 +28,6 @@ Communication-Efficient Learning of Deep Networks from Decentralized Data
 
 import collections
 import attr
-import sys
 import tensorflow as tf
 import tensorflow_federated as tff
 
@@ -171,8 +170,7 @@ def server_update(model, server_optimizer, server_state, weights_delta):
 
 
 @tf.function
-def build_server_broadcast_message(
-  server_state, client_weights, mapping_fn):
+def build_server_broadcast_message(server_state):
   """Builds `BroadcastMessage` for broadcasting.
 
   This method can be used to post-process `ServerState` before broadcasting.
@@ -185,16 +183,9 @@ def build_server_broadcast_message(
   Returns:
     A `BroadcastMessage`.
   """
-  # TODO: Map to client model here! 
-
-  new_client_weights = mapping_fn(
-    server_state.model_weights.trainable, 
-    client_weights.trainable)
-  tff.utils.assign(client_weights.trainable, new_client_weights)
-  
   return BroadcastMessage(
-    model_weights=client_weights,
-    round_num=server_state.round_num)
+      model_weights=server_state.model_weights,
+      round_num=server_state.round_num)
 
 
 @tf.function
@@ -234,4 +225,3 @@ def client_update(model, dataset, server_message, client_optimizer):
                                         initial_weights.trainable)
   client_weight = tf.cast(num_examples, tf.float32)
   return ClientOutput(weights_delta, client_weight, loss_sum / client_weight)
-

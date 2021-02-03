@@ -10,16 +10,9 @@ py_binary(
     python_version = "PY3",
     srcs_version = "PY3",
     deps = [
-        ":emnist_models",
         ":simple_fedavg_tf",
         ":simple_fedavg_tff",
     ],
-)
-
-py_library(
-    name = "emnist_models",
-    srcs = ["emnist_models.py"],
-    srcs_version = "PY3",
 )
 
 py_library(
