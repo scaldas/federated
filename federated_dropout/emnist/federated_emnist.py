@@ -27,7 +27,7 @@ import pandas as pd
 import tensorflow as tf
 import tensorflow_federated as tff
 
-from federated_dropout.emnist import emnist_utils
+from federated_dropout.emnist import emnist_utils_cnn as emnist_utils
 from federated_dropout.dropout_utils import simple_fedavg_tf
 from federated_dropout.dropout_utils import simple_fedavg_tff
 
@@ -46,7 +46,6 @@ flags.DEFINE_float('server_learning_rate', 1.0, 'Server learning rate.')
 flags.DEFINE_float('client_learning_rate', 0.1, 'Client learning rate.')
 
 # Dropout flags.
-flags.DEFINE_integer('dropout_seed', 931231, 'Seed to control dropout randomness.')
 flags.DEFINE_integer('server_hidden_units', 150, 'Number of hidden units on the server.')
 flags.DEFINE_integer('client_hidden_units', 50, 'Number of hidden units on the clients.')
 
@@ -55,7 +54,8 @@ flags.DEFINE_string(
   'results_path', './results/results.csv', 'Path to save results csv.')
 flags.DEFINE_string(
   'cache_path', './cache/', 'Path to cache the dataset.')
-flags.DEFINE_integer('client_selection_seed', 0, 'Seed for training client selection.')
+flags.DEFINE_integer('seed', 0, 'Seed for controlling randomness.')
+flags.DEFINE_bool('only_digits', None, 'Whether to only consider digits.')
 
 
 FLAGS = flags.FLAGS
@@ -72,22 +72,35 @@ def client_optimizer_fn():
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
-  os.environ['PYTHONHASHSEED'] = str(FLAGS.client_selection_seed)
-  np.random.seed(FLAGS.client_selection_seed)
+  os.environ['PYTHONHASHSEED'] = str(FLAGS.seed)
+  np.random.seed(FLAGS.seed)
+
+  assert FLAGS.only_digits is not None, 'Specify a value for --only_digits'
 
   train_data, test_data = emnist_utils.get_emnist_dataset(
-    FLAGS.cache_path)
+    client_epochs_per_round=FLAGS.client_epochs_per_round,
+    client_batch_size=FLAGS.batch_size,
+    max_batches_per_client=-1,
+    test_batch_size=FLAGS.test_batch_size,
+    max_test_batches=None,
+    cache_path=FLAGS.cache_path,
+    seed=FLAGS.seed,
+    only_digits=FLAGS.only_digits)
 
   """These functions construct fully initialized models for use in federated averaging."""
   def tff_server_model_fn():
-    server_model = emnist_utils.create_fully_connected_model(
-      num_hidden_units=FLAGS.server_hidden_units, only_digits=True)
+    server_model = emnist_utils.create_model(
+      hidden_units=FLAGS.server_hidden_units,
+      seed=FLAGS.seed,
+      only_digits=FLAGS.only_digits)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     return simple_fedavg_tf.KerasModelWrapper(server_model, test_data.element_spec, loss)
 
   def tff_client_model_fn():
-    client_model = emnist_utils.create_fully_connected_model(
-      num_hidden_units=FLAGS.client_hidden_units, only_digits=True)
+    client_model = emnist_utils.create_model(
+      hidden_units=FLAGS.client_hidden_units,
+      seed=FLAGS.seed,
+      only_digits=FLAGS.only_digits)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     return simple_fedavg_tf.KerasModelWrapper(client_model, test_data.element_spec, loss)
 
@@ -96,7 +109,7 @@ def main(argv):
       tff_client_model_fn,
       emnist_utils.map_server_to_client_model,
       emnist_utils.map_client_to_server_model,
-      FLAGS.dropout_seed,
+      FLAGS.seed,
       server_optimizer_fn,
       client_optimizer_fn)
   server_state = iterative_process.initialize()
@@ -120,7 +133,7 @@ def main(argv):
     results_dict[round_num] = collections.OrderedDict(
       server_hidden_units=FLAGS.server_hidden_units,
       client_hidden_units=FLAGS.client_hidden_units,
-      dropout_seed=FLAGS.dropout_seed,
+      dropout_seed=FLAGS.seed,
       train_loss=train_metrics)
     
     if round_num % FLAGS.rounds_per_eval == 0:
@@ -148,7 +161,7 @@ def save_results(results_dict):
     columns=[
       'server_hidden_units',
       'client_hidden_units',
-      'dropout_seed',
+      'seed',
       'train_loss',
       'val_accuracy'])
   results_df = results_df.rename_axis('round_num')

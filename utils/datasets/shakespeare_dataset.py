@@ -89,6 +89,7 @@ def convert_snippets_to_character_sequence_examples(
     dataset: tf.data.Dataset,
     batch_size: int,
     epochs: int,
+    seed: int,
     shuffle_buffer_size: int = 50,
     sequence_length: int = SEQUENCE_LENGTH,
     max_batches_per_client: int = -1) -> tf.data.Dataset:
@@ -111,7 +112,7 @@ def convert_snippets_to_character_sequence_examples(
   to_tokens = _build_tokenize_fn(split_length=sequence_length + 1)
   dataset = dataset.repeat(epochs)
   if shuffle_buffer_size > 0:
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    dataset = dataset.shuffle(shuffle_buffer_size, seed=seed)
   return (
       # Convert snippets to int64 tokens and pad.
       dataset.map(to_tokens, num_parallel_calls=tf.data.experimental.AUTOTUNE)
@@ -131,6 +132,7 @@ def convert_snippets_to_character_sequence_examples(
 
 def construct_character_level_datasets(client_batch_size: int,
                                        client_epochs_per_round: int,
+                                       seed: int,
                                        sequence_length: int = SEQUENCE_LENGTH,
                                        max_batches_per_client: int = -1,
                                        shuffle_buffer_size: int = 50,
@@ -151,6 +153,7 @@ def construct_character_level_datasets(client_batch_size: int,
           convert_snippets_to_character_sequence_examples,
           batch_size=client_batch_size,
           epochs=client_epochs_per_round,
+          seed=seed,
           shuffle_buffer_size=shuffle_buffer_size,
           sequence_length=sequence_length,
           max_batches_per_client=max_batches_per_client))
@@ -159,6 +162,7 @@ def construct_character_level_datasets(client_batch_size: int,
 
 
 def get_centralized_datasets(train_batch_size: int,
+                             seed: int,
                              test_batch_size: Optional[int] = 100,
                              max_train_batches: Optional[int] = None,
                              max_test_batches: Optional[int] = None,
@@ -191,6 +195,7 @@ def get_centralized_datasets(train_batch_size: int,
       train_client_data.create_tf_dataset_from_all_clients(),
       batch_size=train_batch_size,
       epochs=1,
+      seed=seed,
       shuffle_buffer_size=shuffle_buffer_size,
       sequence_length=sequence_length)
 
@@ -198,6 +203,7 @@ def get_centralized_datasets(train_batch_size: int,
       test_client_data.create_tf_dataset_from_all_clients(),
       batch_size=test_batch_size,
       epochs=1,
+      seed=seed,
       shuffle_buffer_size=0,
       sequence_length=sequence_length)
 

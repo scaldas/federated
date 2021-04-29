@@ -5,6 +5,7 @@ import tensorflow as tf
 from federated_dropout.utils import keras_metrics
 from utils.datasets import shakespeare_dataset
 
+# VOCAB_SIZE is 90.
 VOCAB_SIZE = len(shakespeare_dataset.CHAR_VOCAB) + 4
 
 
@@ -53,10 +54,11 @@ def get_dataset(
 
 
 def create_model(
+  seed,
   sequence_length=80,
   mask_zero=True,
   vocab_size=VOCAB_SIZE,
-  num_lstms=1, # TODO: Change to 2!
+  num_lstms=2,
   lstm_units=256):
   
   # Tensor 0 corresponds to the embeddings. 
@@ -65,22 +67,29 @@ def create_model(
   #   each LSTM has a kernel (d x 4u), a recurrent kernel (u x 4u) and bias (4u). 
   # Tensors -1 and -2 correspond to the final dense layer. 
   
+  lstm_layer_builder = functools.partial(
+    tf.keras.layers.LSTM,
+    units=lstm_units,
+    kernel_initializer=tf.keras.initializers.he_normal(seed=seed),
+    return_sequences=True,
+    stateful=False)
+
   model = tf.keras.Sequential()
   model.add(
-      tf.keras.layers.Embedding(
-          input_dim=vocab_size,
-          input_length=sequence_length,
-          output_dim=8,
-          mask_zero=mask_zero))
-  lstm_layer_builder = functools.partial(
-      tf.keras.layers.LSTM,
-      units=lstm_units,
-      kernel_initializer='he_normal',
-      return_sequences=True,
-      stateful=False)
+    # I'm not sure if I should seed this.
+    tf.keras.layers.Embedding(
+        input_dim=vocab_size,
+        input_length=sequence_length,
+        output_dim=8,
+        mask_zero=mask_zero))
   for _ in range(num_lstms):
     model.add(lstm_layer_builder())
-  model.add(tf.keras.layers.Dense(vocab_size))  # Note: logits, no softmax.
+  model.add(
+    tf.keras.layers.Dense(
+      vocab_size,
+      activation=None,
+      kernel_initializer=tf.keras.initializers.glorot_uniform(seed=seed),
+      bias_initializer='zeros'))  # Note: logits, no softmax.
   return model
 
 
@@ -91,25 +100,31 @@ def map_server_to_client_model(server_weights, client_weights, seed_1, seed_2):
   client_units = client_weights[2].shape[0]
   activations, repeated_activations = get_activations(
     server_units, client_units, seed_1, seed_2)
-
-  #import sys
-  #tf.print('Papaya', activations, output_stream=sys.stdout)
   
   embeddings = tf.identity(server_weights[0])
 
-  lstm_kernel = tf.gather(server_weights[1], repeated_activations, axis=1)
-  lstm_recurrent = tf.gather(server_weights[2], activations, axis=0)
-  lstm_recurrent = tf.gather(lstm_recurrent, repeated_activations, axis=1)
-  lstm_bias = tf.gather(server_weights[3], repeated_activations, axis=0)
+  lstm_1_kernel = tf.gather(server_weights[1], repeated_activations, axis=1)
+  lstm_1_recurrent = tf.gather(server_weights[2], activations, axis=0)
+  lstm_1_recurrent = tf.gather(lstm_1_recurrent, repeated_activations, axis=1)
+  lstm_1_bias = tf.gather(server_weights[3], repeated_activations, axis=0)
   
-  dense_kernel = tf.gather(server_weights[4], activations, axis=0)  
-  dense_bias = tf.identity(server_weights[5])
+  lstm_2_kernel = tf.gather(server_weights[4], activations, axis=0)
+  lstm_2_kernel = tf.gather(lstm_2_kernel, repeated_activations, axis=1)
+  lstm_2_recurrent = tf.gather(server_weights[5], activations, axis=0)
+  lstm_2_recurrent = tf.gather(lstm_2_recurrent, repeated_activations, axis=1)
+  lstm_2_bias = tf.gather(server_weights[6], repeated_activations, axis=0)
+
+  dense_kernel = tf.gather(server_weights[7], activations, axis=0)  
+  dense_bias = tf.identity(server_weights[8])
   
   return [
     embeddings,
-    lstm_kernel,
-    lstm_recurrent,
-    lstm_bias,
+    lstm_1_kernel,
+    lstm_1_recurrent,
+    lstm_1_bias,
+    lstm_2_kernel,
+    lstm_2_recurrent,
+    lstm_2_bias,
     dense_kernel,
     dense_bias
   ]
@@ -125,42 +140,64 @@ def map_client_to_server_model(client_weights, server_weights, seed_1, seed_2):
 
   embeddings = tf.identity(client_weights[0])
 
-  # Expand the lstm kernel appropriately.
+  # Expand the first lstm cell appropriately.
   target_shape = server_weights[1].shape
   indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
   indices = tf.reshape(indices, [-1, 4 * server_units, len(target_shape)])
   indices = tf.gather(indices, repeated_activations, axis=1)
-  lstm_kernel = tf.scatter_nd(indices, client_weights[1], shape=target_shape)
+  lstm_1_kernel = tf.scatter_nd(indices, client_weights[1], shape=target_shape)
 
-  # Expand the lstm recurrent kernel appropriately.
   target_shape = server_weights[2].shape
   indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
   indices = tf.reshape(indices, [server_units, 4 * server_units, len(target_shape)])
   indices = tf.gather(indices, activations, axis=0)
   indices = tf.gather(indices, repeated_activations, axis=1)
-  lstm_recurrent = tf.scatter_nd(indices, client_weights[2], shape=target_shape)
+  lstm_1_recurrent = tf.scatter_nd(indices, client_weights[2], shape=target_shape)
 
-  # Expand the lstm bias appropriately.
   target_shape = server_weights[3].shape
   indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
   indices = tf.reshape(indices, [4 * server_units, len(target_shape)])
   indices = tf.gather(indices, repeated_activations, axis=0)
-  lstm_bias = tf.scatter_nd(indices, client_weights[3], shape=target_shape)
+  lstm_1_bias = tf.scatter_nd(indices, client_weights[3], shape=target_shape)
+
+  # Expand the second lstm cell appropriately.
+  target_shape = server_weights[4].shape
+  indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
+  indices = tf.reshape(indices, [server_units, 4 * server_units, len(target_shape)])
+  indices = tf.gather(indices, activations, axis=0)
+  indices = tf.gather(indices, repeated_activations, axis=1)
+  lstm_2_kernel = tf.scatter_nd(indices, client_weights[4], shape=target_shape)
+
+  target_shape = server_weights[5].shape
+  indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
+  indices = tf.reshape(indices, [server_units, 4 * server_units, len(target_shape)])
+  indices = tf.gather(indices, activations, axis=0)
+  indices = tf.gather(indices, repeated_activations, axis=1)
+  lstm_2_recurrent = tf.scatter_nd(indices, client_weights[5], shape=target_shape)
+
+  target_shape = server_weights[6].shape
+  indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
+  indices = tf.reshape(indices, [4 * server_units, len(target_shape)])
+  indices = tf.gather(indices, repeated_activations, axis=0)
+  lstm_2_bias = tf.scatter_nd(indices, client_weights[6], shape=target_shape)
 
   # Expand the dense kernel appropriately.
-  target_shape = server_weights[4].shape
+  target_shape = server_weights[7].shape
   indices = tf.cast(tf.where(tf.ones(target_shape)), tf.int32)
   indices = tf.reshape(indices, [server_units, -1, len(target_shape)])
   indices = tf.gather(indices, activations, axis=0)
-  dense_kernel = tf.scatter_nd(indices, client_weights[4], shape=target_shape)
+  dense_kernel = tf.scatter_nd(indices, client_weights[7], shape=target_shape)
 
-  dense_bias = tf.identity(client_weights[5])
+  dense_bias = tf.identity(client_weights[8])
 
   return [
     embeddings,
-    lstm_kernel,
-    lstm_recurrent,
-    lstm_bias,
+    lstm_1_kernel,
+    lstm_1_recurrent,
+    lstm_1_bias,
+    lstm_2_kernel,
+    lstm_2_recurrent,
+    lstm_2_bias,
     dense_kernel,
     dense_bias
   ]
@@ -183,4 +220,3 @@ def get_activations(server_units, client_units, seed_1, seed_2):
     axis=0)
 
   return activations, repeated_activations
-

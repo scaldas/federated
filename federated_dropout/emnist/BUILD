@@ -18,7 +18,7 @@ py_binary(
 
 py_library(
     name = "emnist_utils",
-    srcs = ["emnist_utils.py"],
+    srcs = ["emnist_utils_cnn.py"],
     srcs_version = "PY3",
     deps = [
         "//utils/datasets:emnist_dataset",

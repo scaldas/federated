@@ -28,6 +28,7 @@ Communication-Efficient Learning of Deep Networks from Decentralized Data
 
 import collections
 import attr
+import sys
 import tensorflow as tf
 import tensorflow_federated as tff
 
@@ -63,8 +64,8 @@ class KerasModelWrapper(object):
     Returns:
       A scalar tf.float32 `tf.Tensor` loss for current batch input.
     """
-    preds = self.keras_model(batch_input['x'], training=training)
-    loss = self.loss(batch_input['y'], preds)
+    preds = self.keras_model(batch_input[0], training=training)
+    loss = self.loss(batch_input[1], preds)
     return ModelOutputs(loss=loss)
 
   @property
@@ -83,8 +84,8 @@ class KerasModelWrapper(object):
 def keras_evaluate(model, test_data, metric):
   metric.reset_states()
   for batch in test_data:
-    preds = model(batch['x'], training=False)
-    metric.update_state(y_true=batch['y'], y_pred=preds)
+    preds = model(batch[0], training=False)
+    metric.update_state(y_true=batch[1], y_pred=preds)
   return metric.result()
 
 
@@ -211,12 +212,13 @@ def client_update(model, dataset, server_message, client_optimizer):
   # GPU simulation and slightly more performant in the unconventional usage
   # of large number of small datasets.
   for batch in iter(dataset):
+    #tf.print(batch[1], output_stream=sys.stdout)
     with tf.GradientTape() as tape:
       outputs = model.forward_pass(batch)
     grads = tape.gradient(outputs.loss, model_weights.trainable)
     grads_and_vars = zip(grads, model_weights.trainable)
     client_optimizer.apply_gradients(grads_and_vars)
-    batch_size = tf.shape(batch['x'])[0]
+    batch_size = tf.shape(batch[0])[0]
     num_examples += batch_size
     loss_sum += outputs.loss * tf.cast(batch_size, tf.float32)
 

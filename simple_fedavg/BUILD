@@ -12,6 +12,7 @@ py_binary(
     deps = [
         ":simple_fedavg_tf",
         ":simple_fedavg_tff",
+        "//utils/datasets:emnist_dataset",
     ],
 )
 

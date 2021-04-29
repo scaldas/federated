@@ -30,6 +30,7 @@ def reshape_emnist_element(element):
 
 def get_emnist_datasets(client_batch_size: int,
                         client_epochs_per_round: int,
+                        seed: int,
                         max_batches_per_client: Optional[int] = -1,
                         only_digits: Optional[bool] = False,
                         cache_dir: Optional[str] = None):
@@ -42,6 +43,7 @@ def get_emnist_datasets(client_batch_size: int,
       dataset. If set to -1, the dataset is repeated indefinitely. In this case,
       the `max_batches_per_client` argument should be set to some positive
       integer, to ensure finite training time.
+    seed: Seed for the random shuffles.
     max_batches_per_client: The maximum number of batches (of size
       `client_batch_size`) in the client dataset. This is enforced by using
       `tf.data.Dataset.take`. If set to -1 (the default value), then no maximum
@@ -70,7 +72,7 @@ def get_emnist_datasets(client_batch_size: int,
     """Preprocessing function for the EMNIST training dataset."""
     return (dataset
             # Shuffle according to the largest client dataset
-            .shuffle(buffer_size=MAX_CLIENT_DATASET_SIZE)
+            .shuffle(buffer_size=MAX_CLIENT_DATASET_SIZE, seed=seed)
             # Repeat to do multiple local epochs
             .repeat(client_epochs_per_round)
             # Batch to a fixed client batch size
@@ -90,7 +92,7 @@ def get_emnist_datasets(client_batch_size: int,
 
   emnist_train = emnist_train.preprocess(preprocess_train_dataset)
   emnist_test = preprocess_test_dataset(
-      emnist_test.create_tf_dataset_from_all_clients())
+      emnist_test.create_tf_dataset_from_all_clients(seed=seed))
   return emnist_train, emnist_test
 
 
@@ -100,11 +102,13 @@ def get_centralized_datasets(train_batch_size: int,
                              max_test_batches: Optional[int] = None,
                              only_digits: Optional[bool] = False,
                              shuffle_train: Optional[bool] = True,
-                             cache_dir: Optional[str] = None):
+                             cache_dir: Optional[str] = None,
+                             seed: Optional[int] = None):
   """Loads and preprocesses centralized EMNIST training and testing sets.
 
   Args:
     train_batch_size: The batch size for the training dataset.
+    seed: Seed for random shuffles.
     test_batch_size: The batch size for the test dataset.
     max_train_batches: If set to a positive integer, this specifies the maximum
       number of batches to use from the training dataset.
@@ -125,19 +129,20 @@ def get_centralized_datasets(train_batch_size: int,
   emnist_train, emnist_test = tff.simulation.datasets.emnist.load_data(
       only_digits=only_digits, cache_dir=cache_dir)
 
-  def preprocess(dataset, batch_size, buffer_size=10000, shuffle_data=True):
+  def preprocess(dataset, batch_size, buffer_size=10000, shuffle_data=True, seed=None):
     if shuffle_data:
-      dataset = dataset.shuffle(buffer_size=buffer_size)
+      dataset = dataset.shuffle(buffer_size=buffer_size, seed=seed)
     return (dataset.batch(batch_size).map(
         reshape_emnist_element,
         num_parallel_calls=tf.data.experimental.AUTOTUNE).cache())
 
   train_dataset = preprocess(
-      emnist_train.create_tf_dataset_from_all_clients(),
+      emnist_train.create_tf_dataset_from_all_clients(seed=seed),
       train_batch_size,
-      shuffle_data=shuffle_train)
+      shuffle_data=shuffle_train,
+      seed=seed)
   test_dataset = preprocess(
-      emnist_test.create_tf_dataset_from_all_clients(),
+      emnist_test.create_tf_dataset_from_all_clients(seed=seed),
       test_batch_size,
       shuffle_data=False)
 

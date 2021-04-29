@@ -19,7 +19,7 @@ py_binary(
 
 py_library(
     name = "shakespeare_utils",
-    srcs = ["shakespeare_utils.py"],
+    srcs = ["shakespeare_utils_2_lstm.py"],
     srcs_version = "PY3",
     deps = [
         "//utils/datasets:shakespeare_dataset",

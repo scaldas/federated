@@ -34,6 +34,7 @@ from simple_fedavg_tf import client_update
 from simple_fedavg_tf import server_update
 from simple_fedavg_tf import ServerState
 
+import sys
 
 def _initialize_optimizer_vars(model, optimizer):
   """Creates optimizer variables to assign the optimizer's state."""

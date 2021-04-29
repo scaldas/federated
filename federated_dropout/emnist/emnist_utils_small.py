@@ -1,42 +1,50 @@
+import functools
 import os
 import tensorflow as tf
 
 from utils.datasets import emnist_dataset
 
 
-def get_emnist_dataset(cache_path, only_digits=True):
-  """Loads and preprocesses the EMNIST dataset.
+def get_emnist_dataset(
+  client_epochs_per_round,
+  client_batch_size,
+  max_batches_per_client,
+  test_batch_size,
+  max_test_batches,
+  cache_path,
+  seed,
+  only_digits=True):
 
-  Returns:
-    A `(emnist_train, emnist_test)` tuple where `emnist_train` is a
-    `tff.simulation.ClientData` object representing the training data and
-    `emnist_test` is a single `tf.data.Dataset` representing the test data of
-    all clients.
-  """
+  """Loads and preprocesses the EMNIST dataset."""
   os.makedirs(cache_path, exist_ok=True)
 
-  client_epochs_per_round = 1
-  client_batch_size = 20
-  max_batches_per_client = -1
-  max_test_batches = None
+  #client_epochs_per_round = 1
+  #client_batch_size = 20
+  #max_batches_per_client = -1
+  #max_test_batches = None
+  #test_batch_size = 100
 
   emnist_train, _ = emnist_dataset.get_emnist_datasets(
-      client_batch_size,
-      client_epochs_per_round,
+      client_batch_size=client_batch_size,
+      client_epochs_per_round=client_epochs_per_round,
       max_batches_per_client=max_batches_per_client,
       only_digits=only_digits,
-      cache_dir=cache_path)
+      cache_dir=cache_path,
+      seed=seed)
 
   _, emnist_test = emnist_dataset.get_centralized_datasets(
       train_batch_size=client_batch_size,
+      test_batch_size=test_batch_size,
       max_test_batches=max_test_batches,
       only_digits=only_digits,
-      cache_dir=cache_path)
+      shuffle_train=False, # shouldn't actually matter.
+      cache_dir=cache_path,
+      seed=seed)
   
   return emnist_train, emnist_test
 
 
-def create_fully_connected_model(num_hidden_units, only_digits=True):
+def create_model(hidden_units, seed, only_digits=True):
   """Creates a model with a single hidden layer.
 
   Args:
@@ -48,11 +56,19 @@ def create_fully_connected_model(num_hidden_units, only_digits=True):
   Returns:
     An uncompiled `tf.keras.Model`.
   """
+  dense_layer_builder = functools.partial(
+      tf.keras.layers.Dense,
+      kernel_initializer=tf.keras.initializers.glorot_uniform(seed=seed),
+      bias_initializer='zeros')
+
   model = tf.keras.models.Sequential([
-      tf.keras.layers.Flatten(input_shape=[28, 28, 1]),
-      tf.keras.layers.Dense(num_hidden_units, activation=tf.nn.relu),
-      tf.keras.layers.Dense(10 if only_digits else 62, activation=tf.nn.softmax)
+      tf.keras.layers.Reshape(input_shape=(28, 28, 1), target_shape=(28 * 28,)),
+      dense_layer_builder(units=hidden_units, activation=tf.nn.relu),
+      dense_layer_builder(
+        units=10 if only_digits else 62,
+        activation=tf.nn.softmax),
   ])
+
   return model
 
 

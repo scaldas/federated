@@ -93,12 +93,14 @@ def run_federated(
       client_batch_size,
       client_epochs_per_round,
       max_batches_per_client=max_batches_per_client,
-      only_digits=False)
+      only_digits=False,
+      seed=client_datasets_random_seed)
 
   _, emnist_test = emnist_dataset.get_centralized_datasets(
       train_batch_size=client_batch_size,
       max_test_batches=max_eval_batches,
-      only_digits=False)
+      only_digits=False,
+      seed=client_datasets_random_seed)
 
   input_spec = emnist_train.create_tf_dataset_for_client(
       emnist_train.client_ids[0]).element_spec
